@@ -10,6 +10,8 @@ use crossterm::{
 };
 use tracing::debug;
 
+use crate::shell::Shell;
+
 #[derive(Clone, Debug)]
 struct UserInput {
     input: String,
@@ -36,6 +38,10 @@ impl UserInput {
 
     pub fn is_empty(&self) -> bool {
         self.input.is_empty()
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.input.as_str()
     }
 
     fn byte_index(&self) -> usize {
@@ -90,6 +96,7 @@ impl UserInput {
 }
 
 pub struct ShellState {
+    shell: Shell,
     columns: usize,
     lines: usize,
     prompt_len: usize,
@@ -105,8 +112,9 @@ impl Drop for ShellState {
 }
 
 impl ShellState {
-    pub fn new() -> Self {
+    pub fn new(shell: Shell) -> Self {
         Self {
+            shell,
             columns: 0,
             lines: 0,
             prompt_len: 0,
@@ -114,6 +122,22 @@ impl ShellState {
             clear_above: 0,
             clear_below: 0,
         }
+    }
+
+    fn run_command(&mut self) {
+        self.print_user_input();
+
+        execute!(std::io::stdout(), Print("\r\n")).ok();
+        disable_raw_mode().ok();
+        self.shell.run_script(self.input.as_str());
+        enable_raw_mode().ok();
+
+        self.input.clear();
+        self.clear_above = 0;
+        self.clear_below = 0;
+
+        self.render_prompt();
+        self.print_user_input();
     }
 
     pub fn render_prompt(&mut self) {
@@ -187,6 +211,7 @@ impl ShellState {
     }
 
     pub fn handle_key_event(&mut self, ev: &KeyEvent) {
+        let mut needs_redraw = true;
         match (ev.code, ev.modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 let mut stdout = std::io::stdout();
@@ -215,9 +240,8 @@ impl ShellState {
                 self.input.insert(ch);
             }
             (KeyCode::Enter, KeyModifiers::NONE) => {
-                execute!(std::io::stdout(), Print("\r\n")).ok();
-                self.input.clear();
-                self.render_prompt();
+                self.run_command();
+                needs_redraw = false;
             }
             (KeyCode::Esc, KeyModifiers::NONE) => {
                 disable_raw_mode().ok();
@@ -226,7 +250,9 @@ impl ShellState {
             _ => (),
         }
 
-        self.print_user_input();
+        if needs_redraw {
+            self.print_user_input();
+        }
     }
 
     pub fn run(&mut self) {
